@@ -1,5 +1,7 @@
 import random
 import string
+import socket
+import time
 from datetime import datetime, timedelta
 
 from ctc_data import CtcFlag, CtcType, CtcCategory
@@ -145,13 +147,9 @@ class GoldMessage:
     msg_id = 0
 
     def __init__(self, track_count=1, msg_originator='GOLDTX'):
-        self.gold_tracks_count = track_count
+        self.gold_tracks = [GoldTrack() for _ in range(track_count)]
         self.msg_originator = msg_originator    # TODO: 1-14 chars validation
         GoldMessage.msg_id_increase()
-
-    @property
-    def gold_tracks(self):
-        return [GoldTrack() for _ in range(self.gold_tracks_count)]
 
     @property
     def msg_header(self):
@@ -164,7 +162,7 @@ class GoldMessage:
 
     @property
     def msg_trailer(self):
-        return f'ENDAT\nBT\n\n\n\n\n\n\n\nNNNN'
+        return f'ENDAT\nBT\n\n\n\n\n\n\n\nNNNN\n'
 
     def __str__(self):
         return f'{self.msg_header}{"".join([str(track) for track in self.gold_tracks])}{self.msg_trailer}'
@@ -177,10 +175,27 @@ class GoldMessage:
     def get_msg_id(cls):
         return f'{cls.msg_id:04d}'
 
-    def gold_send_tcp(self):
-        pass
+    def send_tcp(self, ip_address, tcp_port):
+        # TODO: change msg id??? and msg timestamp??? with sending each msg???
+        """
+        Send GOLD data with TCP stream to specified host.
+        """
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((ip_address, tcp_port))
+                print(f'\nSending GOLD data with TCP to {ip_address}:{tcp_port}...\n')
+                while True:
+                    timer_start = time.perf_counter()
+                    s.send(self.__str__().encode())
+                    # Retry after 5 sec
+                    time.sleep(5 - (time.perf_counter() - timer_start))
+        except (OSError, TimeoutError, ConnectionRefusedError, BrokenPipeError) as err:
+            print(f'\n*** Error: {err.strerror} ***\n')
 
-    def gold_send_udp(self):
+    def send_udp(self, ip_address, tcp_port):
+        """
+        Send GOLD data with UDP stream to specified host.
+        """
         pass
 
     def __len__(self):
@@ -192,4 +207,6 @@ class GoldMessage:
  
 if __name__ == "__main__":
     msg = GoldMessage(track_count=10)
-    print(msg)
+    for _ in range(10):
+        print(msg)
+    msg.send_tcp('127.0.0.1', 2020)
