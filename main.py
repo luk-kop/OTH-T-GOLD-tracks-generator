@@ -2,6 +2,7 @@ import random
 import string
 import socket
 import time
+import sys
 from datetime import datetime, timedelta
 
 from ctc_data import CtcFlag, CtcType, CtcCategory
@@ -42,7 +43,7 @@ class GoldCtc:
         self.alert_code = random.choice(['', 'TGT', 'SUS', 'HIT', 'NSP'])
         while True:
             force_code = random.randrange(1, 58)
-            # exclude 33-37
+            # Exclude 33-37
             if force_code not in list(range(33, 38)):
                 self.force_code = f'{force_code:02d}'
                 break
@@ -175,7 +176,7 @@ class GoldMessage:
     def get_msg_id(cls):
         return f'{cls.msg_id:04d}'
 
-    def send_tcp(self, ip_address, tcp_port):
+    def send_tcp(self, ip_address, tcp_port, timer=5):
         # TODO: change msg id??? and msg timestamp??? with sending each msg???
         """
         Send GOLD data with TCP stream to specified host.
@@ -187,16 +188,28 @@ class GoldMessage:
                 while True:
                     timer_start = time.perf_counter()
                     s.send(self.__str__().encode())
-                    # Retry after 5 sec
-                    time.sleep(5 - (time.perf_counter() - timer_start))
+                    # Retry/resend after timer (default 5 sec)
+                    time.sleep(timer - (time.perf_counter() - timer_start))
         except (OSError, TimeoutError, ConnectionRefusedError, BrokenPipeError) as err:
-            print(f'\n*** Error: {err.strerror} ***\n')
+            print(f'\nError: {err.strerror}\n')
+            sys.exit()
 
-    def send_udp(self, ip_address, tcp_port):
+    def send_udp(self, ip_address, udp_port, timer=5):
         """
         Send GOLD data with UDP stream to specified host.
         """
-        pass
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            print(f'\nSending GOLD data with UDP to {ip_address}:{udp_port}...\n')
+            while True:
+                timer_start = time.perf_counter()
+                try:
+                    s.sendto(self.__str__().encode(), (ip_address, udp_port))
+                    time.sleep(0.05)
+                except OSError as err:
+                    print(f'*** Error: {err.strerror} ***')
+                    sys.exit()
+                # Retry/resend after timer (default 5 sec)
+                time.sleep(timer - (time.perf_counter() - timer_start))
 
     def __len__(self):
         """
@@ -207,6 +220,7 @@ class GoldMessage:
  
 if __name__ == "__main__":
     msg = GoldMessage(track_count=10)
-    for _ in range(10):
-        print(msg)
+    # for _ in range(10):
+    #     print(msg)
     msg.send_tcp('127.0.0.1', 2020)
+    # msg.send_udp('127.0.0.1', 2020)
