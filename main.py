@@ -3,6 +3,7 @@ import string
 import socket
 import time
 import sys
+import argparse
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -216,8 +217,25 @@ class GoldMessage:
 
  
 if __name__ == "__main__":
-    msg = GoldMessage(track_count=10)
-    # for _ in range(10):
-    #     print(msg)
-    msg.send_tcp('127.0.0.1', 2020)
-    # msg.send_udp('127.0.0.1', 2020)
+    parser = argparse.ArgumentParser(description='The script generates random OTH-T GOLD tracks')
+    parser.add_argument('-c', '--count', default=1, type=int, help='GOLD track count (default: 1)')
+    parser.add_argument('-t', '--proto', default='tcp', choices=['tcp', 'udp'],
+                        help='Choose UDP transport protocol (default: tcp)')
+    parser.add_argument('-p', '--port', default=2020, type=int, help='Remote host port (default: 2020)')
+    parser.add_argument('ip_address', help='Remote host ip address/hostname')
+    args = parser.parse_args()
+    # Get data from argparse
+    track_count = args.count
+    transport_protocol = args.proto
+    ip_address = args.ip_address
+    port_number = args.port
+
+    try:
+        msg = GoldMessage(track_count=track_count)
+        print('*** Press "Ctrl + c" to exit ***')
+        if transport_protocol == 'tcp':
+            msg.send_tcp(ip_address, port_number)
+        else:
+            msg.send_udp(ip_address, port_number)
+    except KeyboardInterrupt:
+        sys.exit()
