@@ -4,6 +4,7 @@ import socket
 import time
 import sys
 from datetime import datetime, timedelta
+from typing import Optional
 
 from ctc_data import CtcFlag, CtcType, CtcCategory
 
@@ -30,7 +31,7 @@ class GoldCtc:
     """
     name_id = IdGenerator()
 
-    def __init__(self, name='TEST'):
+    def __init__(self, name: str = 'TEST'):
         self.track_number = f'T{random.randrange(100, 99_999):05d}'
         self.class_name = f'UNEQUATED-{name}{next(GoldCtc.name_id)}'     # to change
         self.trademark = ''
@@ -48,10 +49,12 @@ class GoldCtc:
                 self.force_code = f'{force_code:02d}'
                 break
         self.system_track_no = ''
+        self.track_type = ''
         self.average_speed = f'{str(random.randint(0, 50))}'
         self.average_time_on_leg = ''
         self.discrete_id = ''
-        self.uid = f'{random.choice(["ORP", "FGS", "LLL", "COM"])}{random.randrange(1_000_000, 999_999_999):09d}'
+        self.uid = f'{random.choice(["ORP", "FGS", "LLL", "COM", "LAV", "PLN"])}' \
+                   f'{random.randrange(1_000_000, 999_999_999):09d}'
         self.ircs = ''.join(random.sample(string.ascii_uppercase, 4))
         self.suspicion_code = random.choice([f'{random.randrange(1, 11):02d}', ''])
         self.emitter_voice_cs = ''
@@ -68,7 +71,7 @@ class GoldXpos:
     """
     A class representing XPOS OTG set.
     """
-    def __init__(self, position=None):
+    def __init__(self, position: Optional[str] = None):
         self._date_time_group = self.date_time_group
         self.month_year = f'{datetime.utcnow().strftime("%b").upper()}{datetime.utcnow().strftime("%y")}'
         self.position = position
@@ -103,7 +106,7 @@ class GoldXpos:
         return self._position
 
     @position.setter
-    def position(self, value):
+    def position(self, value: str):
         if not value:
             latitude = f'{random.randrange(0, 90):02d}{random.randrange(0, 60):02d}{random.randrange(0, 60):02d}'
             longitude = f'{random.randrange(0, 180):03d}{random.randrange(0, 60):02d}{random.randrange(0, 60):02d}'
@@ -115,7 +118,7 @@ class GoldXpos:
         # TODO: custom position
 
     @staticmethod
-    def _check_sum(value):
+    def _check_sum(value: str):
         """
         Calculate checksum
         """
@@ -145,12 +148,11 @@ class GoldMessage:
     """
     A class representing GOLD msg to send.
     """
-    msg_id = 0
+    msg_id = IdGenerator()
 
-    def __init__(self, track_count=1, msg_originator='GOLDTX'):
+    def __init__(self, track_count: int = 1, msg_originator: str = 'GOLDTX'):
         self.gold_tracks = [GoldTrack() for _ in range(track_count)]
         self.msg_originator = msg_originator    # TODO: 1-14 chars validation
-        GoldMessage.msg_id_increase()
 
     @property
     def msg_header(self):
@@ -169,15 +171,10 @@ class GoldMessage:
         return f'{self.msg_header}{"".join([str(track) for track in self.gold_tracks])}{self.msg_trailer}'
 
     @classmethod
-    def msg_id_increase(cls):
-        cls.msg_id += 1
-
-    @classmethod
     def get_msg_id(cls):
-        return f'{cls.msg_id:04d}'
+        return f'{next(GoldMessage.msg_id):04d}'
 
-    def send_tcp(self, ip_address, tcp_port, timer=5):
-        # TODO: change msg id??? and msg timestamp??? with sending each msg???
+    def send_tcp(self, ip_address: str, tcp_port: int, timer: int = 5):
         """
         Send GOLD data with TCP stream to specified host.
         """
@@ -194,7 +191,7 @@ class GoldMessage:
             print(f'\nError: {err.strerror}\n')
             sys.exit()
 
-    def send_udp(self, ip_address, udp_port, timer=5):
+    def send_udp(self, ip_address: str, udp_port: int, timer: int = 5):
         """
         Send GOLD data with UDP stream to specified host.
         """
