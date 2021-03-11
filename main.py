@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ctc_data import CtcFlag, CtcType, CtcCategory
+from position_funcs import position_to_geod_format, calculated_position, coords_regex
 
 
 class IdGenerator:
@@ -72,7 +73,7 @@ class GoldXpos:
     """
     A class representing XPOS OTG set.
     """
-    def __init__(self, position: Optional[str] = None):
+    def __init__(self, position: Optional[tuple] = None):
         self._date_time_group = self.date_time_group
         self.month_year = f'{datetime.utcnow().strftime("%b").upper()}{datetime.utcnow().strftime("%y")}'
         self.position = position
@@ -93,7 +94,7 @@ class GoldXpos:
     @property
     def date_time_group(self):
         # TODO: different timestamp for each track
-        # Substract 30 min from utcnow
+        # Subtract 30 min from utcnow
         date = f'{(datetime.utcnow().replace(second=0) - timedelta(hours=0, minutes=30)).strftime("%d%H%M%S")}'
         return f'{date}Z{self._check_sum(date)}'
 
@@ -102,21 +103,24 @@ class GoldXpos:
         """
         Returns position in format - LL:552521N0-0163311E5
         """
-        # TODO: If more than one track and not random position - units in some radius from position
-        # TODO: Validate position with regex on input
         return self._position
 
     @position.setter
-    def position(self, value: str):
+    def position(self, value: tuple):
         if not value:
+            # Random position
             latitude = f'{random.randrange(0, 90):02d}{random.randrange(0, 60):02d}{random.randrange(0, 60):02d}'
             longitude = f'{random.randrange(0, 180):03d}{random.randrange(0, 60):02d}{random.randrange(0, 60):02d}'
             latitude_dir = random.choice(['N', 'S'])
             longitude_dir = random.choice(['E', 'W'])
             position = f'LL:{latitude}{latitude_dir}{self._check_sum(latitude)}-' \
                        f'{longitude}{longitude_dir}{self._check_sum(longitude)}'
-            self._position = position
-        # TODO: custom position
+        else:
+            # The position specified by the user
+            latitude, latitude_dir, longitude, longitude_dir = value
+            position = f'LL:{latitude}{latitude_dir}{self._check_sum(latitude)}-' \
+                       f'{longitude}{longitude_dir}{self._check_sum(longitude)}'
+        self._position = position
 
     @staticmethod
     def _check_sum(value: str):
@@ -137,9 +141,9 @@ class GoldTrack:
     """
     A class representing a single track
     """
-    def __init__(self):
+    def __init__(self, position: Optional[tuple] = None):
         self.ctc = GoldCtc()
-        self.xpos = GoldXpos()
+        self.xpos = GoldXpos(position)
 
     def __str__(self):
         return f'{self.ctc}\n{self.xpos}\n'
@@ -151,12 +155,27 @@ class GoldMessage:
     """
     msg_id = IdGenerator()
 
-    def __init__(self, track_count: int = 1, msg_originator: str = 'GOLDTX'):
-        self.gold_tracks = [GoldTrack() for _ in range(track_count)]
-        self.msg_originator = msg_originator    # TODO: 1-14 chars validation
+    def __init__(self, position_data: dict, track_count: int = 1, msg_originator: str = 'GOLDTX'):
+        if position_data['position']:
+            position = position_data['position']
+            tracks_range = position_data['tracks_range']
+            # Convert position to more suitable format
+            position_formatted = {'latitude': f'{position[:4]}',
+                                  'latitude_dir': f'{position[4]}',
+                                  'longitude': f'{position[6:11]}',
+                                  'longitude_dir': f'{position[11]}'}
+            position_geod = position_to_geod_format(position_formatted)
+            self.gold_tracks = [GoldTrack(position=self._generate_position(position_geod, tracks_range)) for _ in range(track_count)]
+        else:
+            self.gold_tracks = [GoldTrack() for _ in range(track_count)]
+        # TODO: 1-14 chars validation
+        self.msg_originator = msg_originator
 
     @property
     def msg_header(self):
+        """
+        GOLD message header.
+        """
         date_hour = datetime.utcnow().strftime("%d%H%M")
         month = datetime.utcnow().strftime("%b").upper()
         year = datetime.utcnow().strftime('%y')
@@ -166,6 +185,9 @@ class GoldMessage:
 
     @property
     def msg_trailer(self):
+        """
+        GOLD message trailer.
+        """
         return f'ENDAT\nBT\n\n\n\n\n\n\n\nNNNN\n'
 
     def __str__(self):
@@ -174,6 +196,21 @@ class GoldMessage:
     @classmethod
     def get_msg_id(cls):
         return f'{next(GoldMessage.msg_id):04d}'
+
+    @staticmethod
+    def _generate_position(position: tuple, tracks_range: int):
+        """
+        Calculate random position for next track.
+        """
+        latitude, longitude = position
+        # Convert nautical miles to meters
+        tracks_range *= 1852
+        # Tracks in random range and directions from designated position.
+        distance = random.randint(0, tracks_range)
+        direction = random.randint(0, 359)
+        # Calculate position for next track.
+        position_new = calculated_position(latitude, longitude, distance, direction)
+        return position_new
 
     def send_tcp(self, ip_address: str, tcp_port: int, timer: int = 5):
         """
@@ -215,23 +252,31 @@ class GoldMessage:
         """
         return len(self.gold_tracks)
 
- 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='The script generates random OTH-T GOLD tracks')
-    parser.add_argument('-c', '--count', default=1, type=int, help='GOLD track count (default: 1)')
+    parser.add_argument('-n', '--number', default=1, type=int, help='GOLD tracks count (default: 1)')
+    parser.add_argument('-c', '--coords', type=coords_regex, help='GOLD track position (default: random)')
+    parser.add_argument('-r', '--range', default=0, type=int,
+                        help='Max track distance in nautical miles from the specified position (default: 0)')
     parser.add_argument('-t', '--proto', default='tcp', choices=['tcp', 'udp'],
                         help='Choose UDP transport protocol (default: tcp)')
     parser.add_argument('-p', '--port', default=2020, type=int, help='Remote host port (default: 2020)')
     parser.add_argument('ip_address', help='Remote host ip address/hostname')
     args = parser.parse_args()
+
     # Get data from argparse
-    track_count = args.count
+    track_number = args.number
     transport_protocol = args.proto
     ip_address = args.ip_address
     port_number = args.port
+    position_data = {'position': args.coords, 'tracks_range': args.range}
 
     try:
-        msg = GoldMessage(track_count=track_count)
+        if track_number > 1 and position_data['tracks_range'] == 0 and position_data['position']:
+            print('Error: Range should be greater than 0 if the number of tracks is greater than 1.')
+            raise KeyboardInterrupt
+        msg = GoldMessage(position_data=position_data, track_count=track_number)
         print('*** Press "Ctrl + c" to exit ***')
         if transport_protocol == 'tcp':
             msg.send_tcp(ip_address, port_number)
