@@ -144,6 +144,8 @@ class GoldTrack:
     def __init__(self, position: Optional[tuple] = None):
         self.ctc = GoldCtc()
         self.xpos = GoldXpos(position)
+        # True if data in ctc or xpos  has been changed
+        self.changed = True
 
     def __str__(self):
         return f'{self.ctc}\n{self.xpos}\n'
@@ -190,9 +192,6 @@ class GoldMessage:
         """
         return f'ENDAT\nBT\n\n\n\n\n\n\n\nNNNN\n'
 
-    def __str__(self):
-        return f'{self.msg_header}{"".join([str(track) for track in self.gold_tracks])}{self.msg_trailer}'
-
     @classmethod
     def get_msg_id(cls):
         return f'{next(GoldMessage.msg_id):04d}'
@@ -222,7 +221,10 @@ class GoldMessage:
                 print(f'\nSending GOLD data with TCP to {ip_address}:{tcp_port}...\n')
                 while True:
                     timer_start = time.perf_counter()
-                    s.send(self.__str__().encode())
+                    # Send packets only with new or changed tracks
+                    if self.gold_tracks_to_send:
+                        s.send(self.__str__().encode())
+                        self.mark_sent_tracks()
                     # Retry/resend after timer (default 5 sec)
                     time.sleep(timer - (time.perf_counter() - timer_start))
         except (OSError, TimeoutError, ConnectionRefusedError, BrokenPipeError) as err:
@@ -238,13 +240,36 @@ class GoldMessage:
             while True:
                 timer_start = time.perf_counter()
                 try:
-                    s.sendto(self.__str__().encode(), (ip_address, udp_port))
-                    time.sleep(0.05)
+                    # Send packets only with new or changed tracks
+                    if self.gold_tracks_to_send:
+                        s.sendto(self.__str__().encode(), (ip_address, udp_port))
+                        self.mark_sent_tracks()
+                        time.sleep(0.05)
                 except OSError as err:
                     print(f'*** Error: {err.strerror} ***')
                     sys.exit()
                 # Retry/resend after timer (default 5 sec)
                 time.sleep(timer - (time.perf_counter() - timer_start))
+
+    def __str__(self):
+        """
+        Render only new or changed GOLD tracks.
+        """
+        return f'{self.msg_header}{"".join([str(track) for track in self.gold_tracks_to_send])}{self.msg_trailer}'
+
+    @property
+    def gold_tracks_to_send(self):
+        """
+        Returns only new or changed GOLD tracks.
+        """
+        return [track for track in self.gold_tracks if track.changed]
+
+    def mark_sent_tracks(self):
+        """
+        Mark sent GOLD tracks as unchanged.
+        """
+        for track in self.gold_tracks_to_send:
+            track.changed = False
 
     def __len__(self):
         """
