@@ -73,8 +73,8 @@ class GoldXpos:
     """
     A class representing XPOS OTG set.
     """
-    def __init__(self, position: Optional[tuple] = None):
-        self._date_time_group = self.date_time_group
+    def __init__(self, position: Optional[tuple] = None, date_time: Optional[datetime] = None):
+        self.date_time_group = date_time
         self.month_year = f'{datetime.utcnow().strftime("%b").upper()}{datetime.utcnow().strftime("%y")}'
         self.position = position
         self.sensor_code = random.choice(['', 'RADAR', 'VISUAL', 'UNK', 'PHOTO', 'SRN25', 'IFF', 'IR'])
@@ -93,10 +93,23 @@ class GoldXpos:
 
     @property
     def date_time_group(self):
-        # TODO: different timestamp for each track
-        # Subtract 30 min from utcnow
-        date = f'{(datetime.utcnow().replace(second=0) - timedelta(hours=0, minutes=30)).strftime("%d%H%M%S")}'
-        return f'{date}Z{self._check_sum(date)}'
+        """
+        Returns date-time group in format - 15200228Z0
+        """
+        return self._date_time_group
+
+    @date_time_group.setter
+    def date_time_group(self, value):
+        if not value:
+            value = datetime.utcnow()
+        date = f'{value.strftime("%d%H%M%S")}'
+        self._date_time_group = f'{date}Z{self._check_sum(date)}'
+
+    def date_time_group_datetime(self):
+        """
+        Returns date and time of position (month_year and date_time_group attrs) as a datetime object.
+        """
+        return datetime.strptime(f"{self.month_year}{self.date_time_group[:-2]}", "%b%y%d%H%M%S")
 
     @property
     def position(self):
@@ -144,7 +157,7 @@ class GoldTrack:
     def __init__(self, position: Optional[tuple] = None):
         self.ctc = GoldCtc()
         self.xpos = GoldXpos(position)
-        # True if data in ctc or xpos  has been changed
+        # True if data in CTC or XPOS has been changed
         self.changed = True
 
     def __str__(self):
@@ -159,6 +172,7 @@ class GoldMessage:
 
     def __init__(self, position_data: dict, track_count: int = 1, msg_originator: str = 'GOLDTX'):
         if position_data['position']:
+            # Run if the position has been specified.
             position = position_data['position']
             tracks_range = position_data['tracks_range']
             # Convert position to more suitable format
@@ -205,50 +219,90 @@ class GoldMessage:
         # Convert nautical miles to meters
         tracks_range *= 1852
         # Tracks in random range and directions from designated position.
-        distance = random.randint(0, tracks_range)
-        direction = random.randint(0, 359)
+        distance = float(random.randint(0, tracks_range))
+        direction = float(random.randint(0, 359))
         # Calculate position for next track.
         position_new = calculated_position(latitude, longitude, distance, direction)
         return position_new
 
-    def send_tcp(self, ip_address: str, tcp_port: int, timer: int = 5):
+    def update_position(self):
+        """
+        Update all GOLD tracks position on demand - from last position time to current time.
+        """
+        for track in self.gold_tracks:
+            # Old position in format - LL:195201N8-1673841E0
+            position_old = track.xpos.position
+            # Convert old position to more suitable format
+            latitude = f'{position_old[3:5]}{int(position_old[5:7]) + (int(position_old[7:9]) / 60)}'
+            latitude_dir = f'{position_old[9]}'
+            longitude = f'{position_old[12:15]}{int(position_old[15:17]) + (int(position_old[17:19]) / 60)}'
+            longitude_dir = f'{position_old[19]}'
+            position_formatted = {'latitude': latitude,
+                                  'latitude_dir': latitude_dir,
+                                  'longitude': longitude,
+                                  'longitude_dir': longitude_dir}
+            # Obtain position in Geod format
+            position_geod = position_to_geod_format(position_formatted)
+            date_time_old = track.xpos.date_time_group_datetime()
+            date_time_old_new = datetime.utcnow()
+            # The time that has elapsed since the last fix
+            time_delta = (date_time_old_new - date_time_old).total_seconds()
+            # Knots to m/s conversion.
+            speed_ms = float(track.xpos.speed[:-3]) * 0.514444
+            # Distance in meters.
+            distance = speed_ms * time_delta
+            direction = float(track.xpos.course[:-1])
+            position_new = calculated_position(position_geod[0], position_geod[1], distance, direction)
+            # Update position
+            track.xpos.position = position_new
+            # Update time of updated position
+            track.xpos.date_time_group = date_time_old_new
+            # Mark GOLD track as changed
+            track.changed = True
+
+    def send_tcp(self, ip_address: str, tcp_port: int, timer: int = 10):
         """
         Send GOLD data with TCP stream to specified host.
         """
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((ip_address, tcp_port))
-                print(f'\nSending GOLD data with TCP to {ip_address}:{tcp_port}...\n')
-                while True:
-                    timer_start = time.perf_counter()
+            print(f'\nSending GOLD data with TCP to {ip_address}:{tcp_port}...\n')
+            while True:
+                timer_start = time.perf_counter()
+                # Every new packet with GOLD data represents a new TCP connection
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((ip_address, tcp_port))
                     # Send packets only with new or changed tracks
                     if self.gold_tracks_to_send:
                         s.send(self.__str__().encode())
                         self.mark_sent_tracks()
-                    # Retry/resend after timer (default 5 sec)
+                    # Update position
+                    self.update_position()
+                    # Retry/resend after timer (default 10 sec)
                     time.sleep(timer - (time.perf_counter() - timer_start))
         except (OSError, TimeoutError, ConnectionRefusedError, BrokenPipeError) as err:
             print(f'\nError: {err.strerror}\n')
             sys.exit()
 
-    def send_udp(self, ip_address: str, udp_port: int, timer: int = 5):
+    def send_udp(self, ip_address: str, udp_port: int, timer: int = 10):
         """
         Send GOLD data with UDP stream to specified host.
         """
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            print(f'\nSending GOLD data with UDP to {ip_address}:{udp_port}...\n')
-            while True:
-                timer_start = time.perf_counter()
+        print(f'\nSending GOLD data with UDP to {ip_address}:{udp_port}...\n')
+        while True:
+            timer_start = time.perf_counter()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 try:
                     # Send packets only with new or changed tracks
                     if self.gold_tracks_to_send:
                         s.sendto(self.__str__().encode(), (ip_address, udp_port))
                         self.mark_sent_tracks()
                         time.sleep(0.05)
+                    # Update position
+                    self.update_position()
                 except OSError as err:
                     print(f'*** Error: {err.strerror} ***')
                     sys.exit()
-                # Retry/resend after timer (default 5 sec)
+                # Retry/resend after timer (default 10 sec)
                 time.sleep(timer - (time.perf_counter() - timer_start))
 
     def __str__(self):
@@ -266,7 +320,7 @@ class GoldMessage:
 
     def mark_sent_tracks(self):
         """
-        Mark sent GOLD tracks as unchanged.
+        Mark already sent GOLD tracks as unchanged.
         """
         for track in self.gold_tracks_to_send:
             track.changed = False

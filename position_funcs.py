@@ -36,7 +36,7 @@ def position_to_geod_format(position: Dict[str, str]):
     return latitude_formatted, longitude_formatted
 
 
-def calculated_position(latitude_start: float, longitude_start: float, distance: int, direction: int):
+def calculated_position(latitude_start: float, longitude_start: float, distance: float, direction: float):
     """
     Calculates the new position based on the given azimuth and distance
     Returns position in format: ('542959', 'N', '0192915', 'E')
