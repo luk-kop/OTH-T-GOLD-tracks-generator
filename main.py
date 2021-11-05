@@ -180,7 +180,8 @@ class GoldMessage:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='The script generates random OTH-T GOLD tracks')
     parser.add_argument('-n', '--number', default=1, type=int, help='GOLD tracks count (default: 1)')
-    parser.add_argument('-c', '--coords', type=coords_regex, help='GOLD track position (default: random)')
+    parser.add_argument('-c', '--coords', type=coords_regex, help='GOLD track position or center of tracks area'
+                                                                  ' in format 5430N-01920E (default: random)')
     parser.add_argument('-r', '--range', default=0, type=int,
                         help='Max track distance in nautical miles from the specified position (default: 0)')
     parser.add_argument('-t', '--proto', default='tcp', choices=['tcp', 'udp'],
@@ -194,7 +195,10 @@ if __name__ == "__main__":
     transport_protocol = args.proto
     ip_address = args.ip_address
     port_number = args.port
-    position_data = {'position': args.coords, 'tracks_range': args.range}
+    position_data = {
+        'position': args.coords,
+        'tracks_range': args.range
+    }
 
     try:
         if track_number > 1 and position_data['tracks_range'] == 0 and position_data['position']:
